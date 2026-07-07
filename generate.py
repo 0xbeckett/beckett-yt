@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUT = ROOT / "renders"
 DEFAULT_WORK = ROOT / "build"
+BACKGROUND_IMAGE = ROOT / "assets" / "banner.png"
 CHARCOAL = "0x0E0F12"
 SLATE = "0x16181D"
 AMBER = "0xF5A623"
@@ -432,14 +433,21 @@ def render_video(
     duration: float,
     fps: int,
 ) -> None:
-    # Fast visual chain: 1080p canvas, subtle grid/scan motion, one ASS pass.
+    # Visible motion comes from zoompan on a still brand image, not from animated
+    # drawbox expressions over the whole timeline (those stalled 1080p renders).
+    if not BACKGROUND_IMAGE.exists():
+        raise SystemExit(f"Missing background image: {BACKGROUND_IMAGE}")
     top_bar = round(HEIGHT * 78 / 720)
     lower_bar = round(HEIGHT * 102 / 720)
     filter_complex = (
-        f"[0:v]drawgrid=width={round(WIDTH / 16)}:height={round(HEIGHT / 9)}:thickness=1:color={ASH}@0.08,"
-        f"drawbox=x=0:y='mod(t*34,ih)':w=iw:h=3:color={AMBER}@0.10:t=fill,"
-        f"drawbox=x=0:y=0:w=iw:h={top_bar}:color=black@0.36:t=fill,"
-        f"drawbox=x=0:y=ih-{lower_bar}:w=iw:h={lower_bar}:color=black@0.34:t=fill,"
+        f"[0:v]scale=2304:1536,"
+        f"zoompan=z='1.12+0.04*sin(on/480)':"
+        f"x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+sin(on/180)*70))':"
+        f"y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+cos(on/210)*45))':"
+        f"d=1:fps={fps}:s={WIDTH}x{HEIGHT},"
+        f"trim=duration={duration:.3f},setpts=PTS-STARTPTS,"
+        f"drawbox=x=0:y=0:w=iw:h={top_bar}:color=black@0.42:t=fill,"
+        f"drawbox=x=0:y=ih-{lower_bar}:w=iw:h={lower_bar}:color=black@0.40:t=fill,"
         f"drawbox=x=0:y={round(HEIGHT * 70 / 720)}:w=iw:h=3:color={AMBER}@0.55:t=fill,"
         f"drawbox=x=0:y={round(HEIGHT * 620 / 720)}:w=iw:h=3:color={AMBER}@0.34:t=fill,"
         f"drawbox=x={round(WIDTH * 40 / 1280)}:y={round(HEIGHT * 118 / 720)}:w={round(WIDTH * 1200 / 1280)}:h=2:color={ASH}@0.20:t=fill,"
@@ -456,10 +464,14 @@ def render_video(
         "10",
         "-progress",
         "pipe:1",
-        "-f",
-        "lavfi",
+        "-loop",
+        "1",
+        "-framerate",
+        str(fps),
+        "-t",
+        f"{duration:.3f}",
         "-i",
-        f"color=c={CHARCOAL}:s={WIDTH}x{HEIGHT}:r={fps}:d={duration:.3f}",
+        str(BACKGROUND_IMAGE),
         "-i",
         str(voiceover),
         "-f",
@@ -475,7 +487,7 @@ def render_video(
         "-c:v",
         "libx264",
         "-preset",
-        "ultrafast",
+        "veryfast",
         "-crf",
         "24",
         "-pix_fmt",
