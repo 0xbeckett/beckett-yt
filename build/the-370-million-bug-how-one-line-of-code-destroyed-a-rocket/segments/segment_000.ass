@@ -1,0 +1,39 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Tiny,DejaVu Sans Mono,18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
+Style: Title,DejaVu Sans,52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
+Style: Amber,DejaVu Sans,38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
+Style: Callout,DejaVu Sans Mono,23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
+Style: Caption,DejaVu Sans,38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.00,0:00:45.21,Tiny,,0,0,0,,{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE
+Dialogue: 1,0:00:00.00,0:00:45.21,Tiny,,0,0,0,,{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED
+Dialogue: 4,0:00:00.00,0:00:08.00,Title,,0,0,0,,{\an5\pos(640,270)\fs58\c&H0023A6F5&}POST-MORTEM
+Dialogue: 4,0:00:01.20,0:00:09.50,Title,,0,0,0,,{\an5\pos(640,346)\fs34\c&H00EBF0F2&}The $370 Million Bug — How One\NLine of Code Destroyed a Rocket
+Dialogue: 4,0:00:02.20,0:00:09.50,Amber,,0,0,0,,{\an5\pos(640,414)\fs22\c&H00988F8A&}THE ANATOMY OF HOW THINGS FALL APART
+Dialogue: 3,0:00:06.86,0:00:11.36,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// HELD BLACK. FAINT LAUNCH-PAD RUMBLE
+Dialogue: 3,0:00:11.87,0:00:16.37,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// AMBER EKG LINE DRAWS ACROSS... FLATLINES... THEN THE\NCRASH SPIKE....
+Dialogue: 3,0:00:30.30,0:00:34.80,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// PAUSE
+Dialogue: 10,0:00:00.00,0:00:04.55,Caption,,0,0,0,,On the fourth of June, 1996, a rocket\Nleft the
+Dialogue: 10,0:00:04.55,0:00:06.37,Caption,,0,0,0,,ground in French Guiana.
+Dialogue: 10,0:00:06.71,0:00:10.91,Caption,,0,0,0,,Thirty-seven seconds later, it tore\Nitself apart in the
+Dialogue: 10,0:00:10.91,0:00:11.38,Caption,,0,0,0,,sky.
+Dialogue: 10,0:00:11.72,0:00:16.30,Caption,,0,0,0,,No one was hurt. There was no sabotage.\NNo storm.
+Dialogue: 10,0:00:16.30,0:00:20.87,Caption,,0,0,0,,No faulty wire, no cracked weld, no\Nengine that failed.
+Dialogue: 10,0:00:21.21,0:00:24.65,Caption,,0,0,0,,The rocket worked perfectly. Every bolt,\Nevery valve,
+Dialogue: 10,0:00:24.65,0:00:28.95,Caption,,0,0,0,,every gram of fuel did exactly what it\Nwas built
+Dialogue: 10,0:00:28.95,0:00:29.81,Caption,,0,0,0,,to do.
+Dialogue: 10,0:00:30.15,0:00:33.74,Caption,,0,0,0,,It was destroyed by a number. A single\Nnumber, in
+Dialogue: 10,0:00:33.74,0:00:37.33,Caption,,0,0,0,,a piece of software that wasn't even\Nsupposed to be
+Dialogue: 10,0:00:37.33,0:00:40.92,Caption,,0,0,0,,running — code that had already done its\Njob, copied
+Dialogue: 10,0:00:40.92,0:00:44.51,Caption,,0,0,0,,over from an older rocket because it had\Nnever once
+Dialogue: 10,0:00:44.51,0:00:44.87,Caption,,0,0,0,,failed.

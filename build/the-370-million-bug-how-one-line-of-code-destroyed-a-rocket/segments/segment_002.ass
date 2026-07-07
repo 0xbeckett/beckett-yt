@@ -1,0 +1,36 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Tiny,DejaVu Sans Mono,18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
+Style: Title,DejaVu Sans,52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
+Style: Amber,DejaVu Sans,38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
+Style: Callout,DejaVu Sans Mono,23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
+Style: Caption,DejaVu Sans,38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.00,0:00:46.66,Tiny,,0,0,0,,{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE
+Dialogue: 1,0:00:00.00,0:00:46.66,Tiny,,0,0,0,,{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED
+Dialogue: 3,0:00:00.15,0:00:04.65,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// STAT CARDS, MONOSPACE: ~10 YEARS · ~$7 BILLION ·\NMAIDEN FLIGHT...
+Dialogue: 3,0:00:15.84,0:00:20.34,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// BEAT
+Dialogue: 3,0:00:35.06,0:00:39.56,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// SIMPLE DIAGRAM: THE SRI FEEDING ORIENTATION DATA TO\NTHE MAIN...
+Dialogue: 10,0:00:00.00,0:00:04.65,Caption,,0,0,0,,Flight 501 was its very first launch.\NThe maiden voyage.
+Dialogue: 10,0:00:04.65,0:00:09.30,Caption,,0,0,0,,On board sat four scientific satellites\Ncalled Cluster — a
+Dialogue: 10,0:00:09.30,0:00:13.95,Caption,,0,0,0,,mission years in the making, built to\Nstudy the Earth's
+Dialogue: 10,0:00:13.95,0:00:15.35,Caption,,0,0,0,,magnetic field. Irreplaceable.
+Dialogue: 10,0:00:15.69,0:00:19.32,Caption,,0,0,0,,Now — a rocket is only as smart as the
+Dialogue: 10,0:00:19.32,0:00:22.95,Caption,,0,0,0,,computer flying it. And that computer\Nneeds to know one
+Dialogue: 10,0:00:22.95,0:00:26.58,Caption,,0,0,0,,thing above all else: which way is up.\NHow is
+Dialogue: 10,0:00:26.58,0:00:30.21,Caption,,0,0,0,,it tilted, how fast is it turning, where\Nis it
+Dialogue: 10,0:00:30.21,0:00:33.48,Caption,,0,0,0,,pointed. That job belongs to a component\Ncalled the
+Dialogue: 10,0:00:33.48,0:00:34.57,Caption,,0,0,0,,Inertial Reference System.
+Dialogue: 10,0:00:34.91,0:00:38.59,Caption,,0,0,0,,Ariane 5 carried two of them — a main\Nunit
+Dialogue: 10,0:00:38.59,0:00:41.90,Caption,,0,0,0,,and a backup — constantly measuring the\Nrocket's motion
+Dialogue: 10,0:00:41.90,0:00:45.58,Caption,,0,0,0,,and feeding it to the flight computer,\Nso the engines
+Dialogue: 10,0:00:45.58,0:00:46.32,Caption,,0,0,0,,could steer.
