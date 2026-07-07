@@ -28,8 +28,12 @@ AMBER = "0xF5A623"
 BONE = "0xF2F0EB"
 ASH = "0x8A8F98"
 RED = "0xE5484D"
-WIDTH = 1280
-HEIGHT = 720
+# Output video is full HD. ASS overlays intentionally use a 1280x720
+# design canvas; libass scales them cleanly to the 1920x1080 render.
+WIDTH = 1920
+HEIGHT = 1080
+ASS_WIDTH = 1280
+ASS_HEIGHT = 720
 
 
 @dataclass
@@ -284,8 +288,8 @@ def write_ass_file(parsed: ParsedScript, work: Path, duration: float) -> Path:
     ass = work / "visuals.ass"
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: {WIDTH}
-PlayResY: {HEIGHT}
+PlayResX: {ASS_WIDTH}
+PlayResY: {ASS_HEIGHT}
 ScaledBorderAndShadow: yes
 WrapStyle: 0
 
@@ -428,14 +432,17 @@ def render_video(
     duration: float,
     fps: int,
 ) -> None:
-    # Fast v1 visual chain: 720p canvas, static lower-third/accent bars, one ASS pass.
-    # No per-frame animated mod() drawboxes and no stacked subtitle burns.
+    # Fast visual chain: 1080p canvas, subtle grid/scan motion, one ASS pass.
+    top_bar = round(HEIGHT * 78 / 720)
+    lower_bar = round(HEIGHT * 102 / 720)
     filter_complex = (
-        f"[0:v]drawbox=x=0:y=0:w=iw:h=78:color=black@0.36:t=fill,"
-        f"drawbox=x=0:y=ih-102:w=iw:h=102:color=black@0.34:t=fill,"
-        f"drawbox=x=0:y=70:w=iw:h=2:color={AMBER}@0.55:t=fill,"
-        f"drawbox=x=0:y=620:w=iw:h=2:color={AMBER}@0.34:t=fill,"
-        f"drawbox=x=40:y=118:w=1200:h=1:color={ASH}@0.20:t=fill,"
+        f"[0:v]drawgrid=width={round(WIDTH / 16)}:height={round(HEIGHT / 9)}:thickness=1:color={ASH}@0.08,"
+        f"drawbox=x=0:y='mod(t*34,ih)':w=iw:h=3:color={AMBER}@0.10:t=fill,"
+        f"drawbox=x=0:y=0:w=iw:h={top_bar}:color=black@0.36:t=fill,"
+        f"drawbox=x=0:y=ih-{lower_bar}:w=iw:h={lower_bar}:color=black@0.34:t=fill,"
+        f"drawbox=x=0:y={round(HEIGHT * 70 / 720)}:w=iw:h=3:color={AMBER}@0.55:t=fill,"
+        f"drawbox=x=0:y={round(HEIGHT * 620 / 720)}:w=iw:h=3:color={AMBER}@0.34:t=fill,"
+        f"drawbox=x={round(WIDTH * 40 / 1280)}:y={round(HEIGHT * 118 / 720)}:w={round(WIDTH * 1200 / 1280)}:h=2:color={ASH}@0.20:t=fill,"
         f"subtitles='{ffmpeg_sub_path(visuals_ass)}'[v];"
         "[1:a]volume=1.00[vo];[2:a]volume=0.025[bed];"
         "[vo][bed]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.96[a]"

@@ -21,10 +21,11 @@ python3 generate.py SCRIPT.md           # full first episode render
 ```
 
 Outputs go to `renders/` and intermediates go to `build/` (both gitignored). The
-full render produces a 1280×720/30fps MP4 with espeak/espeak-ng narration, synced
-burned-in captions, POST-MORTEM branding, audio bed, AAC audio, and a faststart moov
-atom. The ffmpeg step prints heartbeat progress about every 10 seconds and the script
-runs `ffprobe` at the end to verify duration plus video/audio streams.
+full render produces a 1920×1080/30fps MP4 with espeak/espeak-ng narration, synced
+burned-in captions, POST-MORTEM branding, subtle grid/scanline motion, audio bed,
+AAC audio, and a faststart moov atom. The ffmpeg step prints heartbeat progress about
+every 10 seconds and the script runs `ffprobe` at the end to verify duration plus
+video/audio streams.
 
 Dependencies: `ffmpeg`, `ffprobe`, and `espeak-ng`/`espeak`. If they are missing on a
 sudo + apt system, `generate.py` attempts a non-interactive install; use
@@ -109,7 +110,7 @@ recognition.
 ## First video
 
 - Full script, timed and in the channel voice: [`SCRIPT.md`](SCRIPT.md)
-- Episode: **"The $460 Million Bug — How One Line of Code Destroyed a Rocket"**
+- Episode: **"The $370 Million Bug — How One Line of Code Destroyed a Rocket"**
   (the Ariane 5 Flight 501 disaster).
 
 The script is written to be read aloud by an AI voice: short sentences, deliberate
