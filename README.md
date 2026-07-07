@@ -24,8 +24,11 @@ Outputs go to `renders/` and intermediates go to `build/` (both gitignored). The
 full render produces a 1920×1080/30fps MP4 with espeak/espeak-ng narration, synced
 burned-in captions, POST-MORTEM branding, eight evolving background stills with slow
 Ken-Burns zoompan + crossfades, an audio bed, AAC audio, and a faststart moov atom.
-The ffmpeg step prints heartbeat progress about every 10 seconds and the script runs
-`ffprobe` at the end to verify duration plus video/audio streams.
+The final video render is chunked into short narration-bound segments (normally
+~35-50 seconds each). Each segment is its own guarded ffmpeg invocation, prints
+progress/heartbeat output, is ffprobed before reuse, and the finished segments are
+joined with the ffmpeg concat demuxer using `-c copy` so the final join is instant.
+The script runs `ffprobe` at the end to verify duration plus video/audio streams.
 
 Dependencies: `ffmpeg`, `ffprobe`, and `espeak-ng`/`espeak`. The title/caption burn is
 pinned to DejaVu Sans/Mono via the system TTF directory when available so punctuation

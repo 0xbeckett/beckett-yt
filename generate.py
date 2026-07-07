@@ -822,6 +822,58 @@ def render_video_segment(
     run_ffmpeg_with_progress(cmd, duration=duration, timeout=FFMPEG_TIMEOUT_SECONDS)
 
 
+def rendered_segment_is_valid(path: Path, *, expected_duration: float, fps: int) -> bool:
+    """Return True only for complete, ffprobe-readable segment MP4s.
+
+    A watchdog-killed ffmpeg can leave behind a non-zero-size .mp4 with no
+    moov atom. Resumes must not trust file size; they only skip chunks that
+    ffprobe can read and whose stream parameters match the concat recipe.
+    """
+    if not path.exists():
+        return False
+    try:
+        video = run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,r_frame_rate",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            quiet=True,
+        ).stdout.strip()
+        audio = run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            quiet=True,
+        ).stdout.strip()
+        duration = ffprobe_duration(path)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+        return False
+    rate = video.split(",")[-1] if video else ""
+    return (
+        video.startswith(f"{WIDTH},{HEIGHT}")
+        and rate == f"{fps}/1"
+        and bool(audio)
+        and abs(duration - expected_duration) <= 1.25
+    )
+
+
 def concat_segments(segment_files: list[Path], output: Path) -> None:
     concat_file = output.parent / "segments.concat.txt"
     concat_file.write_text("".join(f"file '{path.resolve().as_posix()}'\n" for path in segment_files), encoding="utf-8")
@@ -874,6 +926,14 @@ def render_video(
         )
         segment_output = segment_dir / f"segment_{segment.index:03d}.mp4"
         cards_for_segment = segment_cards(cards, segment.index)
+        if rendered_segment_is_valid(segment_output, expected_duration=segment.duration, fps=fps):
+            print(
+                f"Skipping valid segment {segment.index + 1}/{len(segments)} "
+                f"({segment.start:.1f}-{segment.end:.1f}s, {segment.duration:.1f}s; ffprobe OK)",
+                flush=True,
+            )
+            segment_files.append(segment_output)
+            continue
         print(
             f"Rendering segment {segment.index + 1}/{len(segments)} "
             f"({segment.start:.1f}-{segment.end:.1f}s, {segment.duration:.1f}s, {len(segment.chunks)} narration chunks, "
@@ -889,6 +949,8 @@ def render_video(
             cards=cards_for_segment,
         )
         elapsed = time.monotonic() - started
+        if not rendered_segment_is_valid(segment_output, expected_duration=segment.duration, fps=fps):
+            raise SystemExit(f"Rendered segment failed ffprobe validation: {segment_output}")
         print(f"rendered segment {segment.index + 1}/{len(segments)} in {elapsed:.0f}s", flush=True)
         segment_files.append(segment_output)
 
