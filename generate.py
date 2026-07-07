@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,10 @@ WIDTH = 1920
 HEIGHT = 1080
 ASS_WIDTH = 1280
 ASS_HEIGHT = 720
+FFMPEG_TIMEOUT_SECONDS = 90
+SEGMENT_TARGET_SECONDS = 35.0
+SEGMENT_MAX_SECONDS = 45.0
+SEGMENT_CARD_COUNT = 3
 
 
 @dataclass
@@ -59,10 +64,27 @@ class ParsedScript:
     chunks: list[Chunk]
 
 
-def run(cmd: list[str], *, quiet: bool = False) -> subprocess.CompletedProcess[str]:
+@dataclass
+class RenderSegment:
+    index: int
+    start: float
+    end: float
+    chunks: list[Chunk]
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end - self.start)
+
+
+def run(cmd: list[str], *, quiet: bool = False, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    if timeout is None and Path(cmd[0]).name == "ffmpeg":
+        timeout = FFMPEG_TIMEOUT_SECONDS
     if not quiet:
-        print("$", " ".join(str(c) for c in cmd))
-    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        printable = " ".join(str(c) for c in cmd)
+        if timeout:
+            printable += f"  # timeout={timeout:.0f}s"
+        print("$", printable)
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=timeout)
 
 
 def check_or_install_tools(auto_install: bool) -> None:
@@ -157,7 +179,14 @@ def parse_script(path: Path) -> ParsedScript:
             current_chapter = re.split(r"\s+[·-]\s+\d", heading, maxsplit=1)[0].strip() or heading
             continue
         if line.startswith(">"):
-            quote_buffer.append(line[1:].strip())
+            quoted = line[1:].strip()
+            # A blank blockquote line is a real narration/cue boundary in SCRIPT.md.
+            # Preserve that boundary so video renders can be chunked per line/scene
+            # instead of per whole chapter.
+            if quoted:
+                quote_buffer.append(quoted)
+            else:
+                flush_quote()
         else:
             flush_quote()
     flush_quote()
@@ -284,15 +313,27 @@ def split_caption_groups(text: str, max_chars: int = 58, max_words: int = 10) ->
     return groups
 
 
-def write_ass_file(parsed: ParsedScript, work: Path, duration: float) -> Path:
-    """Write one combined ASS file for captions + brand cards.
+def write_ass_file(
+    parsed: ParsedScript,
+    work: Path,
+    duration: float,
+    *,
+    window_start: float = 0.0,
+    window_end: float | None = None,
+    name: str = "visuals.ass",
+) -> Path:
+    """Write a clipped ASS file for captions + brand cards.
 
-    Keeping this to a single libass burn is much faster than stacking separate
-    subtitle filters for captions and cards. Fonts are pinned to DejaVu and the
-    subtitles filter is pointed at the matching TTF directory so punctuation in
-    titles (dollars, em dashes, apostrophes, commas) renders predictably.
+    Segment renders get local subtitle timestamps (window_start is subtracted)
+    so libass never has to evaluate a full-episode timeline inside each short
+    ffmpeg pass. Fonts are pinned to DejaVu and the subtitles filter is pointed
+    at the matching TTF directory so punctuation in titles (dollars, em dashes,
+    apostrophes, commas) renders predictably.
     """
-    ass = work / "visuals.ass"
+    window_end = duration if window_end is None else min(duration, window_end)
+    segment_duration = max(0.0, window_end - window_start)
+    ass = work / name
+    ass.parent.mkdir(parents=True, exist_ok=True)
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {ASS_WIDTH}
@@ -313,28 +354,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     events: list[str] = []
+
+    def add_event(layer: int, start: float, end: float, style: str, text: str) -> None:
+        clipped_start = max(window_start, start)
+        clipped_end = min(window_end, end)
+        if clipped_end <= clipped_start:
+            return
+        events.append(
+            f"Dialogue: {layer},{ass_time(clipped_start - window_start)},{ass_time(clipped_end - window_start)},"
+            f"{style},,0,0,0,,{text}"
+        )
+
     # Persistent brand/timecode-style labels.
-    events.append(
-        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
-        + r"{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE"
+    add_event(
+        1,
+        window_start,
+        window_end,
+        "Tiny",
+        r"{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE",
     )
-    events.append(
-        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
-        + r"{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED"
+    add_event(
+        1,
+        window_start,
+        window_end,
+        "Tiny",
+        r"{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED",
     )
-    # Opening title.
-    events.append(
-        f"Dialogue: 4,{ass_time(0)},{ass_time(min(8, duration))},Title,,0,0,0,,"
-        + r"{\an5\pos(640,270)\fs58\c&H0023A6F5&}POST-MORTEM"
+    # Opening title, clipped into only the segment(s) that overlap it.
+    add_event(4, 0, min(8, duration), "Title", r"{\an5\pos(640,270)\fs58\c&H0023A6F5&}POST-MORTEM")
+    add_event(
+        4,
+        1.2,
+        min(9.5, duration),
+        "Title",
+        r"{\an5\pos(640,346)\fs34\c&H00EBF0F2&}" + wrap_ass(parsed.title, 31, max_lines=2),
     )
-    events.append(
-        f"Dialogue: 4,{ass_time(1.2)},{ass_time(min(9.5, duration))},Title,,0,0,0,,"
-        + r"{\an5\pos(640,346)\fs34\c&H00EBF0F2&}"
-        + wrap_ass(parsed.title, 31, max_lines=2)
-    )
-    events.append(
-        f"Dialogue: 4,{ass_time(2.2)},{ass_time(min(9.5, duration))},Amber,,0,0,0,,"
-        + r"{\an5\pos(640,414)\fs22\c&H00988F8A&}THE ANATOMY OF HOW THINGS FALL APART"
+    add_event(
+        4,
+        2.2,
+        min(9.5, duration),
+        "Amber",
+        r"{\an5\pos(640,414)\fs22\c&H00988F8A&}THE ANATOMY OF HOW THINGS FALL APART",
     )
 
     last_chapter = None
@@ -343,10 +403,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             last_chapter = chunk.chapter
             chapter_text = re.sub(r"\s*·.*$", "", chunk.chapter).strip().upper()
             if chunk.start > 0.1:
-                events.append(
-                    f"Dialogue: 5,{ass_time(chunk.start)},{ass_time(min(chunk.start + 5.2, duration))},Amber,,0,0,0,,"
-                    + r"{\an5\pos(640,246)\fs40\c&H0023A6F5&}"
-                    + wrap_ass(chapter_text, 34, max_lines=2)
+                add_event(
+                    5,
+                    chunk.start,
+                    min(chunk.start + 5.2, duration),
+                    "Amber",
+                    r"{\an5\pos(640,246)\fs40\c&H0023A6F5&}" + wrap_ass(chapter_text, 34, max_lines=2),
                 )
         # Production-direction callouts become subtle forensic visual cards.
         for cue in chunk.cues[:1]:
@@ -354,10 +416,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 continue
             start = max(0, chunk.start + 0.15)
             end = min(duration, start + min(4.5, max(2.6, chunk.speech_duration)))
-            events.append(
-                f"Dialogue: 3,{ass_time(start)},{ass_time(end)},Callout,,0,0,0,,"
-                + r"{\an8\pos(640,112)\fs21\c&H00988F8A&}"
-                + wrap_ass("// " + cue, 56, max_lines=2)
+            add_event(
+                3,
+                start,
+                end,
+                "Callout",
+                r"{\an8\pos(640,112)\fs21\c&H00988F8A&}" + wrap_ass("// " + cue, 56, max_lines=2),
             )
 
     for chunk in parsed.chunks:
@@ -371,9 +435,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if idx == len(groups) - 1:
                 end = chunk.end
             text = wrap_ass(group, 40, max_lines=2)
-            events.append(f"Dialogue: 10,{ass_time(t)},{ass_time(end)},Caption,,0,0,0,,{text}")
+            add_event(10, t, end, "Caption", text)
             t = end
 
+    if segment_duration <= 0:
+        raise SystemExit(f"Invalid subtitle segment window: {window_start:.3f}-{window_end:.3f}")
     ass.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return ass
 
@@ -520,14 +586,14 @@ def make_background_cards(work: Path) -> list[Path]:
     return cards
 
 
-def run_ffmpeg_with_progress(cmd: list[str], *, duration: float) -> None:
-    """Run ffmpeg while emitting a heartbeat from -progress output."""
-    print("$", " ".join(str(c) for c in cmd))
+def run_ffmpeg_with_progress(cmd: list[str], *, duration: float, timeout: float = FFMPEG_TIMEOUT_SECONDS) -> None:
+    """Run ffmpeg while emitting progress and enforcing a hard timeout."""
+    print("$", " ".join(str(c) for c in cmd) + f"  # timeout={timeout:.0f}s")
     started = time.monotonic()
     last_emit = 0.0
     out_time = 0.0
     speed = "?"
-    tail: deque[str] = deque(maxlen=40)
+    tail: deque[str] = deque(maxlen=60)
     proc = subprocess.Popen(
         cmd,
         text=True,
@@ -536,10 +602,12 @@ def run_ffmpeg_with_progress(cmd: list[str], *, duration: float) -> None:
         bufsize=1,
     )
     assert proc.stdout is not None
-    for raw in proc.stdout:
-        line = raw.strip()
+
+    def consume(line: str) -> None:
+        nonlocal out_time, speed, last_emit
+        line = line.strip()
         if not line:
-            continue
+            return
         tail.append(line)
         if line.startswith("out_time_ms=") or line.startswith("out_time_us="):
             try:
@@ -560,38 +628,105 @@ def run_ffmpeg_with_progress(cmd: list[str], *, duration: float) -> None:
             if line == "progress=end" or now - last_emit >= 9.0:
                 pct = min(100.0, out_time / max(duration, 0.001) * 100)
                 elapsed = now - started
-                print(f"ffmpeg progress: {out_time:6.1f}s / {duration:.1f}s ({pct:5.1f}%), speed={speed}, elapsed={elapsed:.0f}s", flush=True)
+                print(
+                    f"ffmpeg progress: {out_time:6.1f}s / {duration:.1f}s ({pct:5.1f}%), speed={speed}, elapsed={elapsed:.0f}s",
+                    flush=True,
+                )
                 last_emit = now
-    rc = proc.wait()
-    if rc != 0:
-        raise subprocess.CalledProcessError(rc, cmd, output="\n".join(tail))
+
+    try:
+        while True:
+            if time.monotonic() - started > timeout:
+                proc.kill()
+                leftover, _ = proc.communicate(timeout=5)
+                for line in leftover.splitlines():
+                    consume(line)
+                raise subprocess.TimeoutExpired(cmd, timeout, output="\n".join(tail))
+            ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+            if ready:
+                raw = proc.stdout.readline()
+                if raw:
+                    consume(raw)
+            rc = proc.poll()
+            if rc is not None:
+                for raw in proc.stdout:
+                    consume(raw)
+                if rc != 0:
+                    raise subprocess.CalledProcessError(rc, cmd, output="\n".join(tail))
+                return
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
 
-def render_video(
+def plan_render_segments(
+    parsed: ParsedScript,
+    duration: float,
+    *,
+    target: float = SEGMENT_TARGET_SECONDS,
+    max_seconds: float = SEGMENT_MAX_SECONDS,
+) -> list[RenderSegment]:
+    """Group narration chunks into short render passes on silence/chunk boundaries."""
+    if not parsed.chunks:
+        raise SystemExit("No narration chunks available for segment planning")
+    segments: list[RenderSegment] = []
+    current_chunks: list[Chunk] = []
+    current_start = parsed.chunks[0].start
+
+    for idx, chunk in enumerate(parsed.chunks):
+        if not current_chunks:
+            current_start = chunk.start
+        current_chunks.append(chunk)
+        boundary = parsed.chunks[idx + 1].start if idx + 1 < len(parsed.chunks) else duration
+        segment_duration = boundary - current_start
+        should_cut = idx + 1 < len(parsed.chunks) and (segment_duration >= target or segment_duration >= max_seconds)
+        if should_cut:
+            segments.append(RenderSegment(len(segments), current_start, boundary, current_chunks))
+            current_chunks = []
+
+    if current_chunks:
+        segments.append(RenderSegment(len(segments), current_start, duration, current_chunks))
+
+    too_long = [seg for seg in segments if seg.duration > max_seconds + 8]
+    if too_long:
+        details = ", ".join(f"#{seg.index + 1}={seg.duration:.1f}s" for seg in too_long)
+        raise SystemExit(f"Render segment(s) too long for the 90s watchdog guard: {details}")
+    return segments
+
+
+def segment_cards(cards: list[Path], segment_index: int) -> list[Path]:
+    count = min(SEGMENT_CARD_COUNT, len(cards))
+    return [cards[(segment_index + i) % len(cards)] for i in range(count)]
+
+
+def render_video_segment(
     voiceover: Path,
     visuals_ass: Path,
     output: Path,
     *,
-    duration: float,
+    segment: RenderSegment,
     fps: int,
     cards: list[Path],
 ) -> None:
-    # Background evolution is handled as a handful of pre-rendered still plates,
-    # each with slow Ken-Burns zoompan, crossfaded over the runtime. No per-frame
-    # drawbox animation is used; the static framing bars are cheap overlays.
+    # Each segment repeats the cheap visual recipe: pre-rendered brand stills,
+    # slow zoompan Ken-Burns motion, and short xfade transitions. There is no
+    # per-frame animated drawbox work in the hot render path.
     if len(cards) < 2:
         raise SystemExit("Need at least two background cards for an evolving visual track")
-    fade = 0.9 if duration >= 20 else 0.45
+    duration = segment.duration
+    fade = 0.75 if duration >= 10 else 0.35
+    fade = min(fade, max(0.1, duration / max(2 * len(cards), 1)))
     clip_duration = (duration + fade * (len(cards) - 1)) / len(cards)
     top_bar = round(HEIGHT * 78 / 720)
     lower_bar = round(HEIGHT * 102 / 720)
 
     filters: list[str] = []
     for idx in range(len(cards)):
+        motion_seed = segment.index * 3 + idx
         # Alternate pan direction per plate so cuts/crossfades are visibly different.
-        x_expr = "iw/2-iw/zoom/2+sin(on/170+%d)*64" % idx
-        y_expr = "ih/2-ih/zoom/2+cos(on/205+%d)*38" % (idx * 2)
-        zoom_expr = "1.06+0.035*sin(on/360+%d)" % idx
+        x_expr = "iw/2-iw/zoom/2+sin(on/170+%d)*64" % motion_seed
+        y_expr = "ih/2-ih/zoom/2+cos(on/205+%d)*38" % (motion_seed * 2)
+        zoom_expr = "1.06+0.035*sin(on/360+%d)" % motion_seed
         filters.append(
             f"[{idx}:v]scale=2304:1296:force_original_aspect_ratio=increase,crop=2304:1296,"
             f"zoompan=z='{zoom_expr}':"
@@ -604,7 +739,7 @@ def render_video(
     current = "bg0"
     for idx in range(1, len(cards)):
         out = f"xf{idx}"
-        offset = (clip_duration - fade) * idx
+        offset = max(0.0, (clip_duration - fade) * idx)
         filters.append(
             f"[{current}][bg{idx}]xfade=transition=fade:duration={fade:.3f}:offset={offset:.3f},format=yuv420p[{out}]"
         )
@@ -622,7 +757,8 @@ def render_video(
     voice_idx = len(cards)
     bed_idx = len(cards) + 1
     filters.append(
-        f"[{voice_idx}:a]volume=1.00[vo];[{bed_idx}:a]volume=0.025[bed];"
+        f"[{voice_idx}:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,volume=1.00[vo];"
+        f"[{bed_idx}:a]atrim=0:{duration:.3f},asetpts=PTS-STARTPTS,volume=0.025[bed];"
         "[vo][bed]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.96[a]"
     )
     filter_complex = ";".join(filters)
@@ -633,6 +769,10 @@ def render_video(
         cmd.extend(["-loop", "1", "-framerate", str(fps), "-t", f"{clip_duration:.3f}", "-i", str(card)])
     cmd.extend(
         [
+            "-ss",
+            f"{segment.start:.3f}",
+            "-t",
+            f"{duration:.3f}",
             "-i",
             str(voiceover),
             "-f",
@@ -651,25 +791,115 @@ def render_video(
             "veryfast",
             "-crf",
             "24",
+            "-profile:v",
+            "high",
+            "-level:v",
+            "4.1",
             "-pix_fmt",
             "yuv420p",
             "-r",
             str(fps),
+            "-g",
+            str(fps * 2),
+            "-keyint_min",
+            str(fps * 2),
+            "-sc_threshold",
+            "0",
             "-c:a",
             "aac",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
             "-b:a",
             "160k",
-        "-movflags",
-        "+faststart",
+            "-movflags",
+            "+faststart",
             "-shortest",
             str(output),
         ]
     )
-    print(f"Using {len(cards)} background cards with {fade:.1f}s crossfades ({clip_duration:.1f}s per card)")
-    run_ffmpeg_with_progress(cmd, duration=duration)
+    run_ffmpeg_with_progress(cmd, duration=duration, timeout=FFMPEG_TIMEOUT_SECONDS)
 
 
-def verify_output(path: Path, *, width: int = WIDTH, height: int = HEIGHT) -> None:
+def concat_segments(segment_files: list[Path], output: Path) -> None:
+    concat_file = output.parent / "segments.concat.txt"
+    concat_file.write_text("".join(f"file '{path.resolve().as_posix()}'\n" for path in segment_files), encoding="utf-8")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_file),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ]
+    run(cmd, timeout=FFMPEG_TIMEOUT_SECONDS)
+
+
+def render_video(
+    parsed: ParsedScript,
+    voiceover: Path,
+    work: Path,
+    output: Path,
+    *,
+    duration: float,
+    fps: int,
+    cards: list[Path],
+) -> None:
+    segments = plan_render_segments(parsed, duration)
+    segment_dir = work / "segments"
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    segment_files: list[Path] = []
+    print(
+        f"Chunked render plan: {len(segments)} segments, "
+        f"{min(seg.duration for seg in segments):.1f}-{max(seg.duration for seg in segments):.1f}s each, "
+        f"timeout={FFMPEG_TIMEOUT_SECONDS}s per ffmpeg call"
+    )
+    for segment in segments:
+        ass = write_ass_file(
+            parsed,
+            segment_dir,
+            duration,
+            window_start=segment.start,
+            window_end=segment.end,
+            name=f"segment_{segment.index:03d}.ass",
+        )
+        segment_output = segment_dir / f"segment_{segment.index:03d}.mp4"
+        cards_for_segment = segment_cards(cards, segment.index)
+        print(
+            f"Rendering segment {segment.index + 1}/{len(segments)} "
+            f"({segment.start:.1f}-{segment.end:.1f}s, {segment.duration:.1f}s, {len(segment.chunks)} narration chunks, "
+            f"{len(cards_for_segment)} zoompan plates)"
+        )
+        started = time.monotonic()
+        render_video_segment(
+            voiceover,
+            ass,
+            segment_output,
+            segment=segment,
+            fps=fps,
+            cards=cards_for_segment,
+        )
+        elapsed = time.monotonic() - started
+        print(f"rendered segment {segment.index + 1}/{len(segments)} in {elapsed:.0f}s", flush=True)
+        segment_files.append(segment_output)
+
+    concat_start = time.monotonic()
+    print(f"Concatenating {len(segment_files)} chunks with ffmpeg concat demuxer (-c copy)")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    concat_segments(segment_files, output)
+    print(f"concat complete in {time.monotonic() - concat_start:.1f}s", flush=True)
+
+
+def verify_output(path: Path, *, width: int = WIDTH, height: int = HEIGHT, expected_duration: float | None = None) -> None:
     result = run(
         [
             "ffprobe",
@@ -702,9 +932,15 @@ def verify_output(path: Path, *, width: int = WIDTH, height: int = HEIGHT) -> No
     ).stdout.strip()
     duration = ffprobe_duration(path)
     info = result.stdout.strip()
-    if not info.startswith(f"{width},{height}") or not audio or duration <= 1:
-        raise SystemExit(f"Rendered file failed sanity check: video={info!r} audio={audio!r} duration={duration:.2f}")
-    print(f"OK: {path} ({duration/60:.1f} min, {info}, audio={audio})")
+    rate = info.split(",")[-1] if info else ""
+    duration_ok = expected_duration is None or abs(duration - expected_duration) <= 2.5
+    if not info.startswith(f"{width},{height}") or rate != "30/1" or not audio or duration <= 1 or not duration_ok:
+        raise SystemExit(
+            f"Rendered file failed sanity check: video={info!r} audio={audio!r} "
+            f"duration={duration:.2f}s expected={expected_duration}"
+        )
+    expected = f", expected={expected_duration:.2f}s" if expected_duration is not None else ""
+    print(f"OK: {path} ({duration/60:.1f} min, {info}, audio={audio}, duration={duration:.2f}s{expected})")
 
 
 def trim_for_smoke(parsed: ParsedScript, *, max_words: int = 60) -> ParsedScript:
@@ -765,10 +1001,9 @@ def main(argv: list[str] | None = None) -> int:
     mode = "smoke" if args.smoke else "full"
     print(f"Parsed {len(parsed.chunks)} narration chunks from {script.name} ({mode} render, {WIDTH}x{HEIGHT})")
     voiceover, duration = synthesize_voice(parsed, work, speed=args.speed, voice=args.voice, pause=args.pause)
-    visuals_ass = write_ass_file(parsed, work, duration)
     cards = make_background_cards(work)
-    render_video(voiceover, visuals_ass, output, duration=duration, fps=args.fps, cards=cards)
-    verify_output(output)
+    render_video(parsed, voiceover, work, output, duration=duration, fps=args.fps, cards=cards)
+    verify_output(output, expected_duration=duration)
     print(f"Reproducible output: {output.relative_to(ROOT) if output.is_relative_to(ROOT) else output}")
     return 0
 
