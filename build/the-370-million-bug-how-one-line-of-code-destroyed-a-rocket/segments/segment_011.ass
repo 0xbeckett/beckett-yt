@@ -1,0 +1,35 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Tiny,DejaVu Sans Mono,18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
+Style: Title,DejaVu Sans,52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
+Style: Amber,DejaVu Sans,38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
+Style: Callout,DejaVu Sans Mono,23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
+Style: Caption,DejaVu Sans,38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.00,0:00:41.60,Tiny,,0,0,0,,{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE
+Dialogue: 1,0:00:00.00,0:00:41.60,Tiny,,0,0,0,,{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED
+Dialogue: 3,0:00:00.15,0:00:04.65,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// PAUSE
+Dialogue: 3,0:00:21.59,0:00:26.09,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// BEAT
+Dialogue: 3,0:00:32.81,0:00:37.31,Callout,,0,0,0,,{\an8\pos(640,112)\fs21\c&H00988F8A&}// WORDMARK
+Dialogue: 10,0:00:00.00,0:00:04.07,Caption,,0,0,0,,Ariane 5 went on to become one of the\Nmost
+Dialogue: 10,0:00:04.07,0:00:07.73,Caption,,0,0,0,,successful rockets in history — it flew\Nfor another
+Dialogue: 10,0:00:07.73,0:00:11.39,Caption,,0,0,0,,twenty-seven years. They found the bug.\NThey fixed the
+Dialogue: 10,0:00:11.39,0:00:13.43,Caption,,0,0,0,,redundancy. They asked the questions.
+Dialogue: 10,0:00:13.77,0:00:17.84,Caption,,0,0,0,,But the first one paid for that lesson\Nin thirty-seven
+Dialogue: 10,0:00:17.84,0:00:21.10,Caption,,0,0,0,,seconds and three hundred and seventy\Nmillion dollars.
+Dialogue: 10,0:00:21.44,0:00:24.84,Caption,,0,0,0,,Every disaster starts as a decision that\Nmade sense at
+Dialogue: 10,0:00:24.84,0:00:28.24,Caption,,0,0,0,,the time. That's the whole job of this\Nchannel —
+Dialogue: 10,0:00:28.24,0:00:31.64,Caption,,0,0,0,,to go back and find the exact moment the\Nsense
+Dialogue: 10,0:00:31.64,0:00:32.32,Caption,,0,0,0,,ran out.
+Dialogue: 10,0:00:32.66,0:00:35.85,Caption,,0,0,0,,I'm going to keep putting failures on\Nthis table. If
+Dialogue: 10,0:00:35.85,0:00:39.04,Caption,,0,0,0,,you want to be here when I do —\Nsubscribe,
+Dialogue: 10,0:00:39.04,0:00:41.60,Caption,,0,0,0,,and I'll see you at the next one.
