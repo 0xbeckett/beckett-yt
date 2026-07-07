@@ -14,9 +14,10 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUT = ROOT / "renders"
@@ -27,6 +28,8 @@ AMBER = "0xF5A623"
 BONE = "0xF2F0EB"
 ASH = "0x8A8F98"
 RED = "0xE5484D"
+WIDTH = 1280
+HEIGHT = 720
 
 
 @dataclass
@@ -64,11 +67,11 @@ def check_or_install_tools(auto_install: bool) -> None:
         print(f"Missing tools: {', '.join(missing)}. Attempting non-interactive apt install...")
         env = os.environ.copy()
         env["DEBIAN_FRONTEND"] = "noninteractive"
-        subprocess.run(["sudo", "apt-get", "update"], check=True, env=env)
+        subprocess.run(["sudo", "-n", "apt-get", "update"], check=True, env=env)
         packages = ["ffmpeg" if tool in ("ffmpeg", "ffprobe") else "espeak-ng" for tool in missing]
         # Preserve order while de-duping.
         packages = list(dict.fromkeys(packages))
-        subprocess.run(["sudo", "apt-get", "install", "-y", *packages], check=True, env=env)
+        subprocess.run(["sudo", "-n", "apt-get", "install", "-y", *packages], check=True, env=env)
         if all(shutil.which(tool) for tool in ("ffmpeg", "ffprobe")) and (shutil.which("espeak-ng") or shutil.which("espeak")):
             return
 
@@ -272,34 +275,80 @@ def split_caption_groups(text: str, max_chars: int = 58, max_words: int = 10) ->
     return groups
 
 
-def write_ass_files(parsed: ParsedScript, work: Path, duration: float) -> tuple[Path, Path]:
-    captions = work / "captions.ass"
-    cards = work / "cards.ass"
-    header = """[Script Info]
+def write_ass_file(parsed: ParsedScript, work: Path, duration: float) -> Path:
+    """Write one combined ASS file for captions + brand cards.
+
+    Keeping this to a single libass burn is much faster than stacking separate
+    subtitle filters for captions and cards.
+    """
+    ass = work / "visuals.ass"
+    header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {WIDTH}
+PlayResY: {HEIGHT}
 ScaledBorderAndShadow: yes
 WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-"""
-    caption_styles = header + """Style: Caption,Noto Sans,54,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,150,150,74,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    card_styles = header + """Style: Tiny,Noto Sans Mono,26,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,2,0,1,2,0,7,52,52,42,1
-Style: Title,Noto Sans,76,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,100,100,100,1
-Style: Amber,Noto Sans,56,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,100,100,100,1
-Style: Callout,Noto Sans Mono,34,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,130,130,138,1
+Style: Tiny,Noto Sans Mono,18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
+Style: Title,Noto Sans,52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
+Style: Amber,Noto Sans,38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
+Style: Callout,Noto Sans Mono,23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
+Style: Caption,Noto Sans,38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    cap_events: list[str] = []
+    events: list[str] = []
+    # Persistent brand/timecode-style labels.
+    events.append(
+        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
+        + r"{\an7\pos(34,28)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  AUTOPSY FILE"
+    )
+    events.append(
+        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
+        + r"{\an9\pos(1196,118)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED"
+    )
+    # Opening title.
+    events.append(
+        f"Dialogue: 4,{ass_time(0)},{ass_time(min(8, duration))},Title,,0,0,0,,"
+        + r"{\an5\pos(640,270)\fs58\c&H0023A6F5&}POST-MORTEM"
+    )
+    events.append(
+        f"Dialogue: 4,{ass_time(1.2)},{ass_time(min(9.5, duration))},Title,,0,0,0,,"
+        + r"{\an5\pos(640,346)\fs34\c&H00EBF0F2&}"
+        + wrap_ass(parsed.title, 31, max_lines=2)
+    )
+    events.append(
+        f"Dialogue: 4,{ass_time(2.2)},{ass_time(min(9.5, duration))},Amber,,0,0,0,,"
+        + r"{\an5\pos(640,414)\fs22\c&H00988F8A&}THE ANATOMY OF HOW THINGS FALL APART"
+    )
+
+    last_chapter = None
+    for chunk in parsed.chunks:
+        if chunk.chapter != last_chapter:
+            last_chapter = chunk.chapter
+            chapter_text = re.sub(r"\s*·.*$", "", chunk.chapter).strip().upper()
+            if chunk.start > 0.1:
+                events.append(
+                    f"Dialogue: 5,{ass_time(chunk.start)},{ass_time(min(chunk.start + 5.2, duration))},Amber,,0,0,0,,"
+                    + r"{\an5\pos(640,246)\fs40\c&H0023A6F5&}"
+                    + wrap_ass(chapter_text, 34, max_lines=2)
+                )
+        # Production-direction callouts become subtle forensic visual cards.
+        for cue in chunk.cues[:1]:
+            if not cue:
+                continue
+            start = max(0, chunk.start + 0.15)
+            end = min(duration, start + min(4.5, max(2.6, chunk.speech_duration)))
+            events.append(
+                f"Dialogue: 3,{ass_time(start)},{ass_time(end)},Callout,,0,0,0,,"
+                + r"{\an8\pos(640,112)\fs21\c&H00988F8A&}"
+                + wrap_ass("// " + cue, 56, max_lines=2)
+            )
+
     for chunk in parsed.chunks:
         groups = split_caption_groups(chunk.text)
         total_words = max(1, len(chunk.text.split()))
@@ -310,61 +359,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end = min(chunk.end, t + seg_dur)
             if idx == len(groups) - 1:
                 end = chunk.end
-            text = wrap_ass(group, 42, max_lines=2)
-            cap_events.append(f"Dialogue: 10,{ass_time(t)},{ass_time(end)},Caption,,0,0,0,,{text}")
+            text = wrap_ass(group, 40, max_lines=2)
+            events.append(f"Dialogue: 10,{ass_time(t)},{ass_time(end)},Caption,,0,0,0,,{text}")
             t = end
 
-    card_events: list[str] = []
-    # Persistent brand/timecode-style labels.
-    card_events.append(
-        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
-        + r"{\an7\pos(52,42)\c&H0023A6F5&\b1}POST-MORTEM{\c&H00988F8A&\b0}  //  FACeless AUTOPSY FILE"
-    )
-    card_events.append(
-        f"Dialogue: 1,{ass_time(0)},{ass_time(duration)},Tiny,,0,0,0,,"
-        + r"{\an9\pos(1788,176)\c&H00988F8A&}VOICEOVER  //  CAPTIONS SYNCED"
-    )
-    # Opening title.
-    card_events.append(
-        f"Dialogue: 4,{ass_time(0)},{ass_time(min(8, duration))},Title,,0,0,0,,"
-        + r"{\an5\pos(960,405)\fs86\c&H0023A6F5&}POST-MORTEM"
-    )
-    card_events.append(
-        f"Dialogue: 4,{ass_time(1.2)},{ass_time(min(9.5, duration))},Title,,0,0,0,,"
-        + r"{\an5\pos(960,520)\fs48\c&H00EBF0F2&}"
-        + wrap_ass(parsed.title, 34, max_lines=2)
-    )
-    card_events.append(
-        f"Dialogue: 4,{ass_time(2.2)},{ass_time(min(9.5, duration))},Amber,,0,0,0,,"
-        + r"{\an5\pos(960,620)\fs32\c&H00988F8A&}THE ANATOMY OF HOW THINGS FALL APART"
-    )
-
-    last_chapter = None
-    for chunk in parsed.chunks:
-        if chunk.chapter != last_chapter:
-            last_chapter = chunk.chapter
-            chapter_text = re.sub(r"\s*·.*$", "", chunk.chapter).strip().upper()
-            if chunk.start > 0.1:
-                card_events.append(
-                    f"Dialogue: 5,{ass_time(chunk.start)},{ass_time(min(chunk.start + 5.2, duration))},Amber,,0,0,0,,"
-                    + r"{\an5\pos(960,365)\fs60\c&H0023A6F5&}"
-                    + wrap_ass(chapter_text, 36, max_lines=2)
-                )
-        # Production-direction callouts become subtle forensic visual cards.
-        for cue in chunk.cues[:2]:
-            if not cue:
-                continue
-            start = max(0, chunk.start + 0.15)
-            end = min(duration, start + min(5.0, max(2.6, chunk.speech_duration)))
-            card_events.append(
-                f"Dialogue: 3,{ass_time(start)},{ass_time(end)},Callout,,0,0,0,,"
-                + r"{\an8\pos(960,170)\fs32\c&H00988F8A&}"
-                + wrap_ass("// " + cue, 58, max_lines=2)
-            )
-
-    captions.write_text(caption_styles + "\n".join(cap_events) + "\n", encoding="utf-8")
-    cards.write_text(card_styles + "\n".join(card_events) + "\n", encoding="utf-8")
-    return captions, cards
+    ass.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    return ass
 
 
 def ffmpeg_sub_path(path: Path) -> str:
@@ -373,43 +373,86 @@ def ffmpeg_sub_path(path: Path) -> str:
     return s.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
 
 
+def run_ffmpeg_with_progress(cmd: list[str], *, duration: float) -> None:
+    """Run ffmpeg while emitting a heartbeat from -progress output."""
+    print("$", " ".join(str(c) for c in cmd))
+    started = time.monotonic()
+    last_emit = 0.0
+    out_time = 0.0
+    speed = "?"
+    tail: deque[str] = deque(maxlen=40)
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.strip()
+        if not line:
+            continue
+        tail.append(line)
+        if line.startswith("out_time_ms=") or line.startswith("out_time_us="):
+            try:
+                out_time = int(line.split("=", 1)[1]) / 1_000_000
+            except ValueError:
+                pass
+        elif line.startswith("out_time="):
+            stamp = line.split("=", 1)[1]
+            try:
+                h, m, s = stamp.split(":")
+                out_time = int(h) * 3600 + int(m) * 60 + float(s)
+            except ValueError:
+                pass
+        elif line.startswith("speed="):
+            speed = line.split("=", 1)[1].strip() or speed
+        elif line.startswith("progress="):
+            now = time.monotonic()
+            if line == "progress=end" or now - last_emit >= 9.0:
+                pct = min(100.0, out_time / max(duration, 0.001) * 100)
+                elapsed = now - started
+                print(f"ffmpeg progress: {out_time:6.1f}s / {duration:.1f}s ({pct:5.1f}%), speed={speed}, elapsed={elapsed:.0f}s", flush=True)
+                last_emit = now
+    rc = proc.wait()
+    if rc != 0:
+        raise subprocess.CalledProcessError(rc, cmd, output="\n".join(tail))
+
+
 def render_video(
-    parsed: ParsedScript,
     voiceover: Path,
-    captions: Path,
-    cards: Path,
+    visuals_ass: Path,
     output: Path,
     *,
     duration: float,
     fps: int,
 ) -> None:
-    avatar = ROOT / "assets" / "avatar.png"
+    # Fast v1 visual chain: 720p canvas, static lower-third/accent bars, one ASS pass.
+    # No per-frame animated mod() drawboxes and no stacked subtitle burns.
     filter_complex = (
-        f"[0:v]drawgrid=width=80:height=80:thickness=1:color={ASH}@0.16,"
-        f"drawbox=x=0:y=0:w=iw:h=118:color=black@0.36:t=fill,"
-        f"drawbox=x=0:y=ih-150:w=iw:h=150:color=black@0.32:t=fill,"
-        f"drawbox=x='mod(t*155,iw+520)-520':y=864:w=520:h=3:color={AMBER}@0.60:t=fill,"
-        f"drawbox=x='mod(t*90,iw+720)-720':y=250:w=720:h=2:color={ASH}@0.22:t=fill,"
-        f"drawbox=x=0:y=104:w=iw:h=2:color={AMBER}@0.55:t=fill,"
-        f"drawbox=x=0:y=932:w=iw:h=2:color={AMBER}@0.35:t=fill,"
-        f"subtitles='{ffmpeg_sub_path(cards)}',subtitles='{ffmpeg_sub_path(captions)}'[base];"
-        "[1:v]scale=92:92,format=rgba,colorchannelmixer=aa=0.72[logo];"
-        "[base][logo]overlay=x=W-w-52:y=38[v];"
-        "[2:a]volume=1.00[vo];[3:a]volume=0.030[bed];"
+        f"[0:v]drawbox=x=0:y=0:w=iw:h=78:color=black@0.36:t=fill,"
+        f"drawbox=x=0:y=ih-102:w=iw:h=102:color=black@0.34:t=fill,"
+        f"drawbox=x=0:y=70:w=iw:h=2:color={AMBER}@0.55:t=fill,"
+        f"drawbox=x=0:y=620:w=iw:h=2:color={AMBER}@0.34:t=fill,"
+        f"drawbox=x=40:y=118:w=1200:h=1:color={ASH}@0.20:t=fill,"
+        f"subtitles='{ffmpeg_sub_path(visuals_ass)}'[v];"
+        "[1:a]volume=1.00[vo];[2:a]volume=0.025[bed];"
         "[vo][bed]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.96[a]"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
         "-y",
+        "-hide_banner",
+        "-stats_period",
+        "10",
+        "-progress",
+        "pipe:1",
         "-f",
         "lavfi",
         "-i",
-        f"color=c={CHARCOAL}:s=1920x1080:r={fps}:d={duration:.3f}",
-        "-loop",
-        "1",
-        "-i",
-        str(avatar),
+        f"color=c={CHARCOAL}:s={WIDTH}x{HEIGHT}:r={fps}:d={duration:.3f}",
         "-i",
         str(voiceover),
         "-f",
@@ -424,27 +467,27 @@ def render_video(
         "[a]",
         "-c:v",
         "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "24",
         "-pix_fmt",
         "yuv420p",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "21",
         "-r",
         str(fps),
         "-c:a",
         "aac",
         "-b:a",
-        "192k",
+        "160k",
         "-movflags",
         "+faststart",
         "-shortest",
         str(output),
     ]
-    run(cmd)
+    run_ffmpeg_with_progress(cmd, duration=duration)
 
 
-def verify_output(path: Path) -> None:
+def verify_output(path: Path, *, width: int = WIDTH, height: int = HEIGHT) -> None:
     result = run(
         [
             "ffprobe",
@@ -477,9 +520,30 @@ def verify_output(path: Path) -> None:
     ).stdout.strip()
     duration = ffprobe_duration(path)
     info = result.stdout.strip()
-    if not info.startswith("1920,1080") or not audio or duration <= 1:
+    if not info.startswith(f"{width},{height}") or not audio or duration <= 1:
         raise SystemExit(f"Rendered file failed sanity check: video={info!r} audio={audio!r} duration={duration:.2f}")
     print(f"OK: {path} ({duration/60:.1f} min, {info}, audio={audio})")
+
+
+def trim_for_smoke(parsed: ParsedScript, *, max_words: int = 60) -> ParsedScript:
+    """Return a 20-30s-ish cut for validating the full render path quickly."""
+    chunks: list[Chunk] = []
+    remaining = max_words
+    for chunk in parsed.chunks:
+        if remaining <= 0:
+            break
+        words = chunk.text.split()
+        if not words:
+            continue
+        take = min(len(words), remaining)
+        text = " ".join(words[:take])
+        if take < len(words):
+            text = text.rstrip(" .,;:") + "."
+        chunks.append(Chunk(text=text, chapter=chunk.chapter, cues=chunk.cues[:1]))
+        remaining -= take
+    if not chunks:
+        raise SystemExit("Smoke render could not create a short narration cut")
+    return ParsedScript(title=parsed.title, subtitle=parsed.subtitle, chunks=chunks)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -491,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--voice", default="en-us+m3", help="espeak/espeak-ng voice name")
     parser.add_argument("--pause", type=float, default=0.34, help="Seconds of silence between narration paragraphs")
     parser.add_argument("--fps", type=int, default=30, help="Output framerate")
+    parser.add_argument("--smoke", action="store_true", help="Render a 20-30 second cut for fast pipeline validation")
+    parser.add_argument("--smoke-words", type=int, default=60, help="Narration words to include in --smoke mode")
     parser.add_argument("--no-auto-install", action="store_true", help="Do not attempt apt-get install for missing tools")
     parser.add_argument("--keep-work", action="store_true", help="Keep previous work directory instead of replacing slug subdir")
     args = parser.parse_args(argv)
@@ -501,20 +567,24 @@ def main(argv: list[str] | None = None) -> int:
 
     check_or_install_tools(auto_install=not args.no_auto_install)
     parsed = parse_script(script)
+    if args.smoke:
+        parsed = trim_for_smoke(parsed, max_words=args.smoke_words)
     slug = slugify(parsed.title)
     if args.output:
         output = args.output.resolve()
     else:
-        output = (DEFAULT_OUT / f"{slug}.mp4").resolve()
+        suffix = "-smoke" if args.smoke else ""
+        output = (DEFAULT_OUT / f"{slug}{suffix}.mp4").resolve()
     work = (args.work_dir / slug).resolve()
     if work.exists() and not args.keep_work:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    print(f"Parsed {len(parsed.chunks)} narration chunks from {script.name}")
+    mode = "smoke" if args.smoke else "full"
+    print(f"Parsed {len(parsed.chunks)} narration chunks from {script.name} ({mode} render, {WIDTH}x{HEIGHT})")
     voiceover, duration = synthesize_voice(parsed, work, speed=args.speed, voice=args.voice, pause=args.pause)
-    captions, cards = write_ass_files(parsed, work, duration)
-    render_video(parsed, voiceover, captions, cards, output, duration=duration, fps=args.fps)
+    visuals_ass = write_ass_file(parsed, work, duration)
+    render_video(voiceover, visuals_ass, output, duration=duration, fps=args.fps)
     verify_output(output)
     print(f"Reproducible output: {output.relative_to(ROOT) if output.is_relative_to(ROOT) else output}")
     return 0

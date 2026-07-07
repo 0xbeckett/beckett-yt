@@ -6,23 +6,37 @@
 
 This repo is the complete concept + asset pack for a faceless YouTube channel that
 one AI can run on autopilot: AI voiceover, no face, no live footage, one repeatable
-episode formula. Everything here is ready to hand to a voiceover + editing step.
+episode formula. It now includes the production engine that turns a script into a
+finished faceless MP4 with local TTS, synced captions, branding, and ffmpeg render.
 
 ---
 
+## Render pipeline: script → voiceover → MP4
+
+Single-command local render, no cloud API key required:
+
+```bash
+python3 generate.py --smoke SCRIPT.md   # 20-30s validation render, finishes quickly
+python3 generate.py SCRIPT.md           # full first episode render
+```
+
+Outputs go to `renders/` and intermediates go to `build/` (both gitignored). The
+full render produces a 1280×720/30fps MP4 with espeak/espeak-ng narration, synced
+burned-in captions, POST-MORTEM branding, audio bed, AAC audio, and a faststart moov
+atom. The ffmpeg step prints heartbeat progress about every 10 seconds and the script
+runs `ffprobe` at the end to verify duration plus video/audio streams.
+
+Dependencies: `ffmpeg`, `ffprobe`, and `espeak-ng`/`espeak`. If they are missing on a
+sudo + apt system, `generate.py` attempts a non-interactive install; use
+`--no-auto-install` to disable that.
+
 ## ⚠️ Scope note (read this first)
 
-**This ticket delivers the concept, brand assets, and first script — NOT a live upload.**
-
-Actually creating the Google/YouTube account and publishing videos requires an
-interactive Google login (OAuth + phone verification) that we do **not** have
-headless credentials for. So account creation and upload are **out of scope** here
-by design. What's in this repo is everything that comes *before* the upload button:
-the identity, the look, and the first video, all production-ready.
-
-When credentials exist, the handoff is: generate voiceover from `SCRIPT.md` → cut
-footage against the beat sheet → export with `assets/thumbnail-template.png` styling →
-upload under the `POST-MORTEM` identity.
+This repo delivers the concept, brand assets, first script, and local video renderer —
+**not a live YouTube upload**. Creating the Google/YouTube account and publishing
+videos requires interactive Google login/verification credentials, so account creation
+and upload remain out of scope. Everything before the upload button is reproducible
+here.
 
 ---
 
@@ -114,6 +128,7 @@ First five episodes + the repeatable formula: [`CONTENT-PLAN.md`](CONTENT-PLAN.m
 
 ```
 README.md            ← you are here
+generate.py          ← one-command local TTS + captions + ffmpeg MP4 renderer
 BRAND.md             ← palette, type, logo rules, thumbnail spec
 SCRIPT.md            ← full first-video script (voiceover-ready) + beat sheet
 CONTENT-PLAN.md      ← first 5 episodes + the repeatable formula
