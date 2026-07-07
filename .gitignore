@@ -1,0 +1,11 @@
+# Generated video pipeline outputs
+build/
+renders/
+*.mp4
+*.wav
+*.ass
+*.srt
+
+# Python/cache noise
+__pycache__/
+*.pyc
