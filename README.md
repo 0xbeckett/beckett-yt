@@ -22,14 +22,16 @@ python3 generate.py SCRIPT.md           # full first episode render
 
 Outputs go to `renders/` and intermediates go to `build/` (both gitignored). The
 full render produces a 1920×1080/30fps MP4 with espeak/espeak-ng narration, synced
-burned-in captions, POST-MORTEM branding, low-cost zoompan motion over the channel
-banner art, audio bed, AAC audio, and a faststart moov atom. The ffmpeg step prints
-heartbeat progress about every 10 seconds and the script runs `ffprobe` at the end to
-verify duration plus video/audio streams.
+burned-in captions, POST-MORTEM branding, eight evolving background stills with slow
+Ken-Burns zoompan + crossfades, an audio bed, AAC audio, and a faststart moov atom.
+The ffmpeg step prints heartbeat progress about every 10 seconds and the script runs
+`ffprobe` at the end to verify duration plus video/audio streams.
 
-Dependencies: `ffmpeg`, `ffprobe`, and `espeak-ng`/`espeak`. If they are missing on a
-sudo + apt system, `generate.py` attempts a non-interactive install; use
-`--no-auto-install` to disable that.
+Dependencies: `ffmpeg`, `ffprobe`, and `espeak-ng`/`espeak`. The title/caption burn is
+pinned to DejaVu Sans/Mono via the system TTF directory when available so punctuation
+in episode titles renders cleanly. If tools are missing on a sudo + apt system,
+`generate.py` attempts a non-interactive install; use `--no-auto-install` to disable
+that.
 
 ## ⚠️ Scope note (read this first)
 

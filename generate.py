@@ -23,6 +23,10 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_OUT = ROOT / "renders"
 DEFAULT_WORK = ROOT / "build"
 BACKGROUND_IMAGE = ROOT / "assets" / "banner.png"
+FONT_DIR = Path("/usr/share/fonts/truetype/dejavu")
+ASS_FONT = "DejaVu Sans"
+ASS_MONO_FONT = "DejaVu Sans Mono"
+BACKGROUND_CARD_COUNT = 8
 CHARCOAL = "0x0E0F12"
 SLATE = "0x16181D"
 AMBER = "0xF5A623"
@@ -284,7 +288,9 @@ def write_ass_file(parsed: ParsedScript, work: Path, duration: float) -> Path:
     """Write one combined ASS file for captions + brand cards.
 
     Keeping this to a single libass burn is much faster than stacking separate
-    subtitle filters for captions and cards.
+    subtitle filters for captions and cards. Fonts are pinned to DejaVu and the
+    subtitles filter is pointed at the matching TTF directory so punctuation in
+    titles (dollars, em dashes, apostrophes, commas) renders predictably.
     """
     ass = work / "visuals.ass"
     header = f"""[Script Info]
@@ -296,11 +302,11 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Tiny,Noto Sans Mono,18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
-Style: Title,Noto Sans,52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
-Style: Amber,Noto Sans,38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
-Style: Callout,Noto Sans Mono,23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
-Style: Caption,Noto Sans,38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
+Style: Tiny,{ASS_MONO_FONT},18,&H00988F8A,&H000000FF,&HAA000000,&H00000000,0,0,0,0,100,100,1,0,1,2,0,7,34,34,28,1
+Style: Title,{ASS_FONT},52,&H00EBF0F2,&H0023A6F5,&HAA000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,5,66,66,66,1
+Style: Amber,{ASS_FONT},38,&H0023A6F5,&H000000FF,&HAA000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,0,5,66,66,66,1
+Style: Callout,{ASS_MONO_FONT},23,&H00988F8A,&H0023A6F5,&HAA000000,&H770E0F12,-1,0,0,0,100,100,1,0,3,2,0,8,86,86,92,1
+Style: Caption,{ASS_FONT},38,&H00EBF0F2,&H0023A6F5,&HCC000000,&H99000000,-1,0,0,0,100,100,0,0,1,4,1,2,100,100,48,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -373,9 +379,145 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def ffmpeg_sub_path(path: Path) -> str:
-    # Escape for ffmpeg's subtitles filter filename argument.
+    # Escape for ffmpeg filter filename arguments.
     s = path.resolve().as_posix()
     return s.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
+
+
+def subtitles_filter(path: Path) -> str:
+    arg = f"filename='{ffmpeg_sub_path(path)}'"
+    if FONT_DIR.exists():
+        arg += f":fontsdir='{ffmpeg_sub_path(FONT_DIR)}'"
+    return f"subtitles={arg}"
+
+
+def hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.removeprefix("0x").removeprefix("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def blend(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, t))
+    return tuple(round(a[i] * (1 - t) + b[i] * t) for i in range(3))  # type: ignore[return-value]
+
+
+def put_pixel(rows: list[bytearray], x: int, y: int, color: tuple[int, int, int], alpha: float = 1.0) -> None:
+    if y < 0 or y >= len(rows) or x < 0 or x * 3 + 2 >= len(rows[y]):
+        return
+    idx = x * 3
+    if alpha >= 1:
+        rows[y][idx : idx + 3] = bytes(color)
+        return
+    rows[y][idx] = round(rows[y][idx] * (1 - alpha) + color[0] * alpha)
+    rows[y][idx + 1] = round(rows[y][idx + 1] * (1 - alpha) + color[1] * alpha)
+    rows[y][idx + 2] = round(rows[y][idx + 2] * (1 - alpha) + color[2] * alpha)
+
+
+def draw_line(rows: list[bytearray], p0: tuple[int, int], p1: tuple[int, int], color: tuple[int, int, int], *, width: int = 1, alpha: float = 1.0) -> None:
+    x0, y0 = p0
+    x1, y1 = p1
+    dx = abs(x1 - x0)
+    dy = -abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx + dy
+    radius = max(0, width // 2)
+    while True:
+        for oy in range(-radius, radius + 1):
+            for ox in range(-radius, radius + 1):
+                put_pixel(rows, x0 + ox, y0 + oy, color, alpha)
+        if x0 == x1 and y0 == y1:
+            break
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
+
+
+def draw_rect(rows: list[bytearray], x: int, y: int, w: int, h: int, color: tuple[int, int, int], *, alpha: float = 1.0) -> None:
+    for yy in range(max(0, y), min(len(rows), y + h)):
+        row_width = len(rows[yy]) // 3
+        for xx in range(max(0, x), min(row_width, x + w)):
+            put_pixel(rows, xx, yy, color, alpha)
+
+
+def write_background_card(path: Path, idx: int, *, width: int = 1280, height: int = 720) -> None:
+    charcoal = hex_to_rgb("0E0F12")
+    slate = hex_to_rgb("16181D")
+    amber = hex_to_rgb("F5A623")
+    ash = hex_to_rgb("8A8F98")
+    red = hex_to_rgb("E5484D")
+    blue = (42, 78, 116)
+    green = (32, 86, 72)
+    violet = (63, 49, 92)
+    accents = [amber, red, blue, green, violet, amber, red]
+    accent = accents[idx % len(accents)]
+    bg_b = blend(slate, accent, 0.05 + (idx % 3) * 0.025)
+
+    rows: list[bytearray] = []
+    for y in range(height):
+        t = y / max(1, height - 1)
+        row = bytearray()
+        for x in range(width):
+            u = x / max(1, width - 1)
+            diagonal = ((x + idx * 97) / width + (y / height) * 0.8) % 1.0
+            base = blend(charcoal, bg_b, 0.18 + 0.42 * t + 0.10 * u)
+            if diagonal < 0.035:
+                base = blend(base, accent, 0.10)
+            if x < width * 0.26 and y > height * 0.16:
+                base = blend(base, accent, 0.035 + idx * 0.004)
+            row.extend(base)
+        rows.append(row)
+
+    # Blueprint grid and section-specific bars: static inside each card, cheap to encode.
+    for x in range((idx * 23) % 80, width, 80):
+        draw_line(rows, (x, 0), (x, height - 1), ash, alpha=0.11)
+    for y in range((idx * 17) % 72, height, 72):
+        draw_line(rows, (0, y), (width - 1, y), ash, alpha=0.10)
+    draw_rect(rows, 0, 0, width, round(height * 0.11), (0, 0, 0), alpha=0.20)
+    draw_rect(rows, 0, round(height * 0.86), width, round(height * 0.14), (0, 0, 0), alpha=0.22)
+    draw_rect(rows, round(width * 0.05), round(height * (0.18 + 0.045 * (idx % 4))), round(width * (0.38 + 0.035 * (idx % 3))), 5, accent, alpha=0.50)
+    draw_rect(rows, round(width * (0.68 - 0.035 * (idx % 4))), round(height * 0.18), 5, round(height * 0.58), accent, alpha=0.28)
+
+    # POST-MORTEM motif: EKG line that varies by card.
+    y_mid = round(height * (0.55 + (idx % 3 - 1) * 0.035))
+    pts = [
+        (round(width * 0.08), y_mid),
+        (round(width * 0.24), y_mid),
+        (round(width * 0.28), y_mid - 28 - idx * 2),
+        (round(width * 0.31), y_mid + 42 + idx * 2),
+        (round(width * 0.35), y_mid - 14),
+        (round(width * 0.44), y_mid),
+        (round(width * 0.58), y_mid),
+        (round(width * 0.68), y_mid + 70 + idx * 4),
+        (round(width * 0.82), y_mid + 70 + idx * 4),
+    ]
+    for a, b in zip(pts, pts[1:]):
+        draw_line(rows, a, b, accent, width=5, alpha=0.62)
+    for a, b in zip(pts, pts[1:]):
+        draw_line(rows, a, b, amber, width=2, alpha=0.75)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        f.write(f"P6\n{width} {height}\n255\n".encode("ascii"))
+        for row in rows:
+            f.write(row)
+
+
+def make_background_cards(work: Path) -> list[Path]:
+    cards_dir = work / "backgrounds"
+    cards_dir.mkdir(parents=True, exist_ok=True)
+    cards: list[Path] = []
+    if BACKGROUND_IMAGE.exists():
+        cards.append(BACKGROUND_IMAGE)
+    for idx in range(BACKGROUND_CARD_COUNT - len(cards)):
+        card = cards_dir / f"plate_{idx + 1:02d}.ppm"
+        write_background_card(card, idx)
+        cards.append(card)
+    return cards
 
 
 def run_ffmpeg_with_progress(cmd: list[str], *, duration: float) -> None:
@@ -432,77 +574,98 @@ def render_video(
     *,
     duration: float,
     fps: int,
+    cards: list[Path],
 ) -> None:
-    # Visible motion comes from zoompan on a still brand image, not from animated
-    # drawbox expressions over the whole timeline (those stalled 1080p renders).
-    if not BACKGROUND_IMAGE.exists():
-        raise SystemExit(f"Missing background image: {BACKGROUND_IMAGE}")
+    # Background evolution is handled as a handful of pre-rendered still plates,
+    # each with slow Ken-Burns zoompan, crossfaded over the runtime. No per-frame
+    # drawbox animation is used; the static framing bars are cheap overlays.
+    if len(cards) < 2:
+        raise SystemExit("Need at least two background cards for an evolving visual track")
+    fade = 0.9 if duration >= 20 else 0.45
+    clip_duration = (duration + fade * (len(cards) - 1)) / len(cards)
     top_bar = round(HEIGHT * 78 / 720)
     lower_bar = round(HEIGHT * 102 / 720)
-    filter_complex = (
-        f"[0:v]scale=2304:1536,"
-        f"zoompan=z='1.12+0.04*sin(on/480)':"
-        f"x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+sin(on/180)*70))':"
-        f"y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+cos(on/210)*45))':"
-        f"d=1:fps={fps}:s={WIDTH}x{HEIGHT},"
-        f"trim=duration={duration:.3f},setpts=PTS-STARTPTS,"
+
+    filters: list[str] = []
+    for idx in range(len(cards)):
+        # Alternate pan direction per plate so cuts/crossfades are visibly different.
+        x_expr = "iw/2-iw/zoom/2+sin(on/170+%d)*64" % idx
+        y_expr = "ih/2-ih/zoom/2+cos(on/205+%d)*38" % (idx * 2)
+        zoom_expr = "1.06+0.035*sin(on/360+%d)" % idx
+        filters.append(
+            f"[{idx}:v]scale=2304:1296:force_original_aspect_ratio=increase,crop=2304:1296,"
+            f"zoompan=z='{zoom_expr}':"
+            f"x='max(0,min(iw-iw/zoom,{x_expr}))':"
+            f"y='max(0,min(ih-ih/zoom,{y_expr}))':"
+            f"d=1:fps={fps}:s={WIDTH}x{HEIGHT},"
+            f"trim=duration={clip_duration:.3f},setpts=PTS-STARTPTS[bg{idx}]"
+        )
+
+    current = "bg0"
+    for idx in range(1, len(cards)):
+        out = f"xf{idx}"
+        offset = (clip_duration - fade) * idx
+        filters.append(
+            f"[{current}][bg{idx}]xfade=transition=fade:duration={fade:.3f}:offset={offset:.3f},format=yuv420p[{out}]"
+        )
+        current = out
+
+    filters.append(
+        f"[{current}]trim=duration={duration:.3f},setpts=PTS-STARTPTS,"
         f"drawbox=x=0:y=0:w=iw:h={top_bar}:color=black@0.42:t=fill,"
         f"drawbox=x=0:y=ih-{lower_bar}:w=iw:h={lower_bar}:color=black@0.40:t=fill,"
         f"drawbox=x=0:y={round(HEIGHT * 70 / 720)}:w=iw:h=3:color={AMBER}@0.55:t=fill,"
         f"drawbox=x=0:y={round(HEIGHT * 620 / 720)}:w=iw:h=3:color={AMBER}@0.34:t=fill,"
         f"drawbox=x={round(WIDTH * 40 / 1280)}:y={round(HEIGHT * 118 / 720)}:w={round(WIDTH * 1200 / 1280)}:h=2:color={ASH}@0.20:t=fill,"
-        f"subtitles='{ffmpeg_sub_path(visuals_ass)}'[v];"
-        "[1:a]volume=1.00[vo];[2:a]volume=0.025[bed];"
+        f"{subtitles_filter(visuals_ass)}[v]"
+    )
+    voice_idx = len(cards)
+    bed_idx = len(cards) + 1
+    filters.append(
+        f"[{voice_idx}:a]volume=1.00[vo];[{bed_idx}:a]volume=0.025[bed];"
         "[vo][bed]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.96[a]"
     )
+    filter_complex = ";".join(filters)
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-stats_period",
-        "10",
-        "-progress",
-        "pipe:1",
-        "-loop",
-        "1",
-        "-framerate",
-        str(fps),
-        "-t",
-        f"{duration:.3f}",
-        "-i",
-        str(BACKGROUND_IMAGE),
-        "-i",
-        str(voiceover),
-        "-f",
-        "lavfi",
-        "-i",
-        f"sine=frequency=54:sample_rate=48000:duration={duration:.3f}",
-        "-filter_complex",
-        filter_complex,
-        "-map",
-        "[v]",
-        "-map",
-        "[a]",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "24",
-        "-pix_fmt",
-        "yuv420p",
-        "-r",
-        str(fps),
-        "-c:a",
-        "aac",
-        "-b:a",
-        "160k",
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-stats_period", "10", "-progress", "pipe:1"]
+    for card in cards:
+        cmd.extend(["-loop", "1", "-framerate", str(fps), "-t", f"{clip_duration:.3f}", "-i", str(card)])
+    cmd.extend(
+        [
+            "-i",
+            str(voiceover),
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=54:sample_rate=48000:duration={duration:.3f}",
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "24",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(fps),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
         "-movflags",
         "+faststart",
-        "-shortest",
-        str(output),
-    ]
+            "-shortest",
+            str(output),
+        ]
+    )
+    print(f"Using {len(cards)} background cards with {fade:.1f}s crossfades ({clip_duration:.1f}s per card)")
     run_ffmpeg_with_progress(cmd, duration=duration)
 
 
@@ -603,7 +766,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Parsed {len(parsed.chunks)} narration chunks from {script.name} ({mode} render, {WIDTH}x{HEIGHT})")
     voiceover, duration = synthesize_voice(parsed, work, speed=args.speed, voice=args.voice, pause=args.pause)
     visuals_ass = write_ass_file(parsed, work, duration)
-    render_video(voiceover, visuals_ass, output, duration=duration, fps=args.fps)
+    cards = make_background_cards(work)
+    render_video(voiceover, visuals_ass, output, duration=duration, fps=args.fps, cards=cards)
     verify_output(output)
     print(f"Reproducible output: {output.relative_to(ROOT) if output.is_relative_to(ROOT) else output}")
     return 0
